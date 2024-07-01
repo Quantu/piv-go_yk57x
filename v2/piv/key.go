@@ -743,7 +743,7 @@ func marshalASN1(tag byte, data []byte) []byte {
 // SetCertificate stores a certificate object in the provided slot. Setting a
 // certificate isn't required to use the associated key for signing or
 // decryption.
-func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificate) error {
+func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
 	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
@@ -797,7 +797,7 @@ type Key struct {
 
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
-func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
+func (yk *YubiKey) GenerateKey(key []byte, slot Slot, opts Key) (crypto.PublicKey, error) {
 	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
 		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
@@ -1005,7 +1005,7 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 // Keys generated outside of the YubiKey should not be considered hardware-backed,
 // as there's no way to prove the key wasn't copied, exfiltrated, or replaced with malicious
 // material before being imported.
-func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto.PrivateKey, policy Key) error {
+func (yk *YubiKey) SetPrivateKeyInsecure(key []byte, slot Slot, private crypto.PrivateKey, policy Key) error {
 	// Reference implementation
 	// https://github.com/Yubico/yubico-piv-tool/blob/671a5740ef09d6c5d9d33f6e5575450750b58bde/lib/ykpiv.c#L1812
 
