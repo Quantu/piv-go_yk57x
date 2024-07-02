@@ -509,7 +509,26 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
 	if err := ykAuthenticate(yk.tx, oldKey, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with old key: %w", err)
 	}
-	if err := ykSetManagementKey(yk.tx, newKey, false); err != nil {
+	var managementKeyType byte
+	if supportsVersion(yk.Version(), 5, 4, 0) {
+		// if yubikey version >= 5.4.0, set AES management key
+		switch len(newKey) {
+		case 16:
+			managementKeyType = algAES128
+		case 24:
+			managementKeyType = algAES192
+		case 32:
+			managementKeyType = algAES256
+		default:
+			return fmt.Errorf("invalid new AES management key length: %d bytes (expected 16, 24, or 32)", len(newKey))
+		}
+	} else if len(newKey) == 24 {
+		// if yubikey version < 5.4.0, set legacy 3DES management key
+		managementKeyType = alg3DES
+	} else {
+		return fmt.Errorf("invalid new 3DES management key length: %d bytes (expected 24)", len(newKey))
+	}
+	if err := ykSetManagementKey(yk.tx, managementKeyType, newKey, false); err != nil {
 		return err
 	}
 	return nil
@@ -517,19 +536,7 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
 
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
-func ykSetManagementKey(tx *scTx, key []byte, touch bool) error {
-	var managementKeyType byte
-	switch len(key) {
-	case 16:
-		managementKeyType = algAES128
-	case 24:
-		// could also be 3DES key, but AES192 is preferred so try that first
-		managementKeyType = algAES192
-	case 32:
-		managementKeyType = algAES256
-	default:
-		return fmt.Errorf("invalid new management key length: %d", len(key))
-	}
+func ykSetManagementKey(tx *scTx, managementKeyType byte, key []byte, touch bool) error {
 	cmd := apdu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
@@ -542,22 +549,6 @@ func ykSetManagementKey(tx *scTx, key []byte, touch bool) error {
 		cmd.param2 = 0xfe
 	}
 	_, err := tx.Transmit(cmd)
-	if err != nil && len(key) == 24 {
-		// if setting AES192 managment key failed, fallback to 3DES
-		managementKeyType = alg3DES
-		cmd := apdu{
-			instruction: insSetMGMKey,
-			param1:      0xff,
-			param2:      0xff,
-			data: append([]byte{
-				managementKeyType, keyCardManagement, byte(len(key)),
-			}, key[:]...),
-		}
-		if touch {
-			cmd.param2 = 0xfe
-		}
-		_, err = tx.Transmit(cmd)
-	}
 	if err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
