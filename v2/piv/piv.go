@@ -548,8 +548,7 @@ func ykSetManagementKey(tx *scTx, managementKeyType byte, key []byte, touch bool
 	if touch {
 		cmd.param2 = 0xfe
 	}
-	_, err := tx.Transmit(cmd)
-	if err != nil {
+	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
