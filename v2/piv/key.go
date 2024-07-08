@@ -744,7 +744,7 @@ func marshalASN1(tag byte, data []byte) []byte {
 // certificate isn't required to use the associated key for signing or
 // decryption.
 func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.Version()); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykStoreCertificate(yk.tx, slot, cert)
@@ -798,7 +798,7 @@ type Key struct {
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
 func (yk *YubiKey) GenerateKey(key []byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.Version()); err != nil {
 		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykGenerateKey(yk.tx, slot, opts)
@@ -1073,7 +1073,7 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key []byte, slot Slot, private crypto.P
 		tags = append(tags, param...)
 	}
 
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.Version()); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 

@@ -354,7 +354,7 @@ type version struct {
 //
 // Use DefaultManagementKey if the management key hasn't been set.
 func (yk *YubiKey) authManagementKey(key []byte) error {
-	return ykAuthenticate(yk.tx, key, yk.rand)
+	return ykAuthenticate(yk.tx, key, yk.rand, yk.Version())
 }
 
 var (
@@ -369,20 +369,22 @@ var (
 	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
-func ykAuthenticate(tx *scTx, key []byte, rand io.Reader) error {
+func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version Version) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
-	// determine management key type, this will fail on older keys and that's fine
 	var managementKeyType byte
-	cmd := apdu{
-		instruction: insGetMetadata,
-		param1:      0x00,
-		param2:      keyCardManagement,
-	}
-	resp, err := tx.Transmit(cmd)
-	if err == nil {
-		managementKeyType = resp[2:][0]
+	if supportsVersion(version, 5, 3, 0) {
+		// if yubikey version >= 5.3.0, determine management key type using slot metadata
+		cmd := apdu{
+			instruction: insGetMetadata,
+			param1:      0x00,
+			param2:      keyCardManagement,
+		}
+		resp, err := tx.Transmit(cmd)
+		if err == nil {
+			managementKeyType = resp[2:][0]
+		}
 	}
 
 	// set challengeLength based on managementKeyType
@@ -397,7 +399,7 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader) error {
 	}
 
 	// request a witness
-	cmd = apdu{
+	cmd := apdu{
 		instruction: insAuthenticate,
 		param1:      managementKeyType,
 		param2:      keyCardManagement,
@@ -408,7 +410,7 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader) error {
 			0x00, // Return encrypted random
 		},
 	}
-	resp, err = tx.Transmit(cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
 		return fmt.Errorf("get auth challenge: %w", err)
 	}
@@ -506,29 +508,10 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader) error {
 //		// ...
 //	}
 func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
-	if err := ykAuthenticate(yk.tx, oldKey, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, oldKey, yk.rand, yk.Version()); err != nil {
 		return fmt.Errorf("authenticating with old key: %w", err)
 	}
-	var managementKeyType byte
-	if supportsVersion(yk.Version(), 5, 4, 0) {
-		// if yubikey version >= 5.4.0, set AES management key
-		switch len(newKey) {
-		case 16:
-			managementKeyType = algAES128
-		case 24:
-			managementKeyType = algAES192
-		case 32:
-			managementKeyType = algAES256
-		default:
-			return fmt.Errorf("invalid new AES management key length: %d bytes (expected 16, 24, or 32)", len(newKey))
-		}
-	} else if len(newKey) == 24 {
-		// if yubikey version < 5.4.0, set legacy 3DES management key
-		managementKeyType = alg3DES
-	} else {
-		return fmt.Errorf("invalid new 3DES management key length: %d bytes (expected 24)", len(newKey))
-	}
-	if err := ykSetManagementKey(yk.tx, managementKeyType, newKey, false); err != nil {
+	if err := ykSetManagementKey(yk.tx, newKey, false, yk.Version()); err != nil {
 		return err
 	}
 	return nil
@@ -536,7 +519,26 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
 
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
-func ykSetManagementKey(tx *scTx, managementKeyType byte, key []byte, touch bool) error {
+func ykSetManagementKey(tx *scTx, key []byte, touch bool, version Version) error {
+	var managementKeyType byte
+	if supportsVersion(version, 5, 4, 0) {
+		// if yubikey version >= 5.4.0, set AES management key
+		switch len(key) {
+		case 16:
+			managementKeyType = algAES128
+		case 24:
+			managementKeyType = algAES192
+		case 32:
+			managementKeyType = algAES256
+		default:
+			return fmt.Errorf("invalid new AES management key length: %d bytes (expected 16, 24, or 32)", len(key))
+		}
+	} else if len(key) == 24 {
+		// if yubikey version < 5.4.0, set legacy 3DES management key
+		managementKeyType = alg3DES
+	} else {
+		return fmt.Errorf("invalid new 3DES management key length: %d bytes (expected 24)", len(key))
+	}
 	cmd := apdu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
@@ -715,6 +717,11 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 // store the management key on the smart card instead of managing the PIN and
 // management key seperately.
 func (yk *YubiKey) SetMetadata(key []byte, m *Metadata) error {
+	// NOTE: for some reason this action requires the management key authenticated
+	// on the same transaction. It doesn't work otherwise.
+	if err := ykAuthenticate(yk.tx, key, rand.Reader, yk.Version()); err != nil {
+		return fmt.Errorf("authenticating with key: %w", err)
+	}
 	return ykSetProtectedMetadata(yk.tx, key, m)
 }
 
@@ -861,11 +868,6 @@ func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata) error {
 		param1:      0x3f,
 		param2:      0xff,
 		data:        data,
-	}
-	// NOTE: for some reason this action requires the management key authenticated
-	// on the same transaction. It doesn't work otherwise.
-	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
-		return fmt.Errorf("authenticating with key: %w", err)
 	}
 	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
