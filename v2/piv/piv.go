@@ -382,9 +382,10 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version *version) erro
 			param2:      keyCardManagement,
 		}
 		resp, err := tx.Transmit(cmd)
-		if err == nil {
-			managementKeyType = resp[2:][0]
+		if err != nil {
+			return fmt.Errorf("determining key management type: %w", err)
 		}
+		managementKeyType = resp[2:][0]
 	}
 
 	// set challengeLength based on managementKeyType
