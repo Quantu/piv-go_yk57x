@@ -354,7 +354,7 @@ type version struct {
 //
 // Use DefaultManagementKey if the management key hasn't been set.
 func (yk *YubiKey) authManagementKey(key []byte) error {
-	return ykAuthenticate(yk.tx, key, yk.rand, yk.Version())
+	return ykAuthenticate(yk.tx, key, yk.rand, yk.version)
 }
 
 var (
@@ -369,7 +369,7 @@ var (
 	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
-func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version Version) error {
+func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version *version) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
@@ -508,10 +508,10 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version Version) error
 //		// ...
 //	}
 func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
-	if err := ykAuthenticate(yk.tx, oldKey, yk.rand, yk.Version()); err != nil {
+	if err := ykAuthenticate(yk.tx, oldKey, yk.rand, yk.version); err != nil {
 		return fmt.Errorf("authenticating with old key: %w", err)
 	}
-	if err := ykSetManagementKey(yk.tx, newKey, false, yk.Version()); err != nil {
+	if err := ykSetManagementKey(yk.tx, newKey, false, yk.version); err != nil {
 		return err
 	}
 	return nil
@@ -519,7 +519,7 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey []byte) error {
 
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
-func ykSetManagementKey(tx *scTx, key []byte, touch bool, version Version) error {
+func ykSetManagementKey(tx *scTx, key []byte, touch bool, version *version) error {
 	var managementKeyType byte
 	if supportsVersion(version, 5, 4, 0) {
 		// if yubikey version >= 5.4.0, set AES management key
@@ -719,7 +719,7 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 func (yk *YubiKey) SetMetadata(key []byte, m *Metadata) error {
 	// NOTE: for some reason this action requires the management key authenticated
 	// on the same transaction. It doesn't work otherwise.
-	if err := ykAuthenticate(yk.tx, key, rand.Reader, yk.Version()); err != nil {
+	if err := ykAuthenticate(yk.tx, key, rand.Reader, yk.version); err != nil {
 		return fmt.Errorf("authenticating with key: %w", err)
 	}
 	return ykSetProtectedMetadata(yk.tx, key, m)
@@ -875,12 +875,12 @@ func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata) error {
 	return nil
 }
 
-func supportsVersion(v Version, major, minor, patch int) bool {
-	if v.Major != major {
-		return v.Major > major
+func supportsVersion(v *version, major, minor, patch byte) bool {
+	if v.major != major {
+		return v.major > major
 	}
-	if v.Minor != minor {
-		return v.Minor > minor
+	if v.minor != minor {
+		return v.minor > minor
 	}
-	return v.Patch >= patch
+	return v.patch >= patch
 }
