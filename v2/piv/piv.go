@@ -717,12 +717,7 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 // store the management key on the smart card instead of managing the PIN and
 // management key seperately.
 func (yk *YubiKey) SetMetadata(key []byte, m *Metadata) error {
-	// NOTE: for some reason this action requires the management key authenticated
-	// on the same transaction. It doesn't work otherwise.
-	if err := ykAuthenticate(yk.tx, key, rand.Reader, yk.version); err != nil {
-		return fmt.Errorf("authenticating with key: %w", err)
-	}
-	return ykSetProtectedMetadata(yk.tx, key, m)
+	return ykSetProtectedMetadata(yk.tx, key, m, yk.rand, yk.version)
 }
 
 // Metadata holds protected metadata. This is primarily used by YubiKey manager
@@ -851,7 +846,7 @@ func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
 	return &m, nil
 }
 
-func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata) error {
+func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata, rand io.Reader, version *version) error {
 	data, err := m.marshal()
 	if err != nil {
 		return fmt.Errorf("encoding metadata: %v", err)
@@ -863,6 +858,11 @@ func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata) error {
 		0xc1,
 		0x09,
 	}, marshalASN1(0x53, data)...)
+	// NOTE: for some reason this action requires the management key authenticated	
+	// on the same transaction. It doesn't work otherwise.	
+	if err := ykAuthenticate(tx, key, rand, version); err != nil {	
+		return fmt.Errorf("authenticating with key: %w", err)	
+	}
 	cmd := apdu{
 		instruction: insPutData,
 		param1:      0x3f,
