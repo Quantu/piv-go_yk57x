@@ -664,6 +664,34 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 	return err
 }
 
+func (yk *YubiKey) SetRetries(managementKey []byte, pin string, pinRetries byte, pukRetries byte) error {
+	return ykSetRetries(yk.tx, managementKey, pin, pinRetries, pukRetries, yk.rand, yk.version)
+}
+
+func ykSetRetries(tx *scTx, managementKey []byte, pin string, pinRetries byte, pukRetries byte, rand io.Reader, version *version) error {
+	if pinRetries < 1 || pukRetries < 1 {
+		return fmt.Errorf("pinRetries and pukRetries must both be greater than zero")
+	}
+
+	// NOTE: this action requires the management key AND PIN to be authenticated on
+	// the same transaction. It doesn't work otherwise.
+	if err := ykAuthenticate(tx, managementKey, rand, version); err != nil {
+		return fmt.Errorf("authenticating with management key: %w", err)
+	}
+	if err := ykLogin(tx, pin); err != nil {
+		return fmt.Errorf("authenticating with pin: %w", err)
+	}
+	cmd := apdu{
+		instruction: insSetPINRetries,
+		param1:      pinRetries,
+		param2:      pukRetries,
+	}
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+	return nil
+}
+
 func ykSelectApplication(tx *scTx, id []byte) error {
 	cmd := apdu{
 		instruction: insSelectApplication,
