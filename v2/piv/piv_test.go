@@ -41,10 +41,11 @@ func testGetVersion(t *testing.T, h *scHandle) {
 		t.Fatalf("new transaction: %v", err)
 	}
 	defer tx.Close()
-	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
+	yk := &YubiKey{h: h, tx: tx}
+	if err := yk.ykSelectApplication(aidPIV[:]); err != nil {
 		t.Fatalf("selecting application: %v", err)
 	}
-	if _, err := ykVersion(tx); err != nil {
+	if _, err := yk.ykVersion(); err != nil {
 		t.Fatalf("listing version: %v", err)
 	}
 }
@@ -147,13 +148,13 @@ func TestYubiKeyLoginNeeded(t *testing.T) {
 
 	testRequiresVersion(t, yk, 4, 3, 0)
 
-	if !ykLoginNeeded(yk.tx) {
+	if !yk.ykLoginNeeded() {
 		t.Errorf("expected login needed")
 	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
+	if err := yk.ykLogin(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if ykLoginNeeded(yk.tx) {
+	if yk.ykLoginNeeded() {
 		t.Errorf("expected no login needed")
 	}
 }
@@ -228,7 +229,7 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 
 	badPIN := "0"
 	for {
-		err := ykLogin(yk.tx, badPIN)
+		err := yk.ykLogin(badPIN)
 		if err == nil {
 			t.Fatalf("login with bad pin succeeded")
 		}
@@ -244,7 +245,7 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 	if err := yk.Unblock(DefaultPUK, DefaultPIN); err != nil {
 		t.Fatalf("unblocking pin: %v", err)
 	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
+	if err := yk.ykLogin(DefaultPIN); err != nil {
 		t.Errorf("failed to login with pin after unblock: %v", err)
 	}
 }

@@ -560,7 +560,7 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 //
 // If the slot doesn't have a key, the returned error wraps ErrNotFound.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
-	cert, err := ykAttest(yk.tx, slot)
+	cert, err := yk.ykAttest(slot)
 	if err == nil {
 		return cert, nil
 	}
@@ -571,12 +571,12 @@ func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
 	return nil, err
 }
 
-func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
+func (yk *YubiKey) ykAttest(slot Slot) (*x509.Certificate, error) {
 	cmd := apdu{
 		instruction: insAttest,
 		param1:      byte(slot.Key),
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -744,13 +744,10 @@ func marshalASN1(tag byte, data []byte) []byte {
 // certificate isn't required to use the associated key for signing or
 // decryption.
 func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
-		return fmt.Errorf("authenticating with management key: %w", err)
-	}
-	return ykStoreCertificate(yk.tx, slot, cert)
+	return yk.ykStoreCertificate(key, slot, cert)
 }
 
-func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
+func (yk *YubiKey) ykStoreCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=40
 	data := marshalASN1(0x70, cert.Raw)
 	// "for a certificate encoded in uncompressed form CertInfo shall be 0x00"
@@ -765,13 +762,17 @@ func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 		byte(slot.Object >> 8),
 		byte(slot.Object),
 	}, marshalASN1(0x53, data)...)
+	// NOTE: this action requires the management key to be authenticated on the same transaction.
+	if err := yk.ykAuthenticate(key); err != nil {
+		return fmt.Errorf("authenticating with management key: %w", err)
+	}
 	cmd := apdu{
 		instruction: insPutData,
 		param1:      0x3f,
 		param2:      0xff,
 		data:        data,
 	}
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := yk.tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %v", err)
 	}
 	return nil
@@ -798,13 +799,13 @@ type Key struct {
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
 func (yk *YubiKey) GenerateKey(key []byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
+	if err := yk.ykAuthenticate(key); err != nil {
 		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
-	return ykGenerateKey(yk.tx, slot, opts)
+	return yk.ykGenerateKey(slot, opts)
 }
 
-func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
+func (yk *YubiKey) ykGenerateKey(slot Slot, o Key) (crypto.PublicKey, error) {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return nil, fmt.Errorf("unsupported algorithm")
@@ -829,7 +830,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 			tagTouchPolicy, 0x01, tp,
 		},
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -900,7 +901,7 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	// PINPolicyAlways should always prompt a PIN even if the key says that
 	// login isn't needed.
 	// https://github.com/go-piv/piv-go/issues/49
-	if pp != PINPolicyAlways && !ykLoginNeeded(yk.tx) {
+	if pp != PINPolicyAlways && !yk.ykLoginNeeded() {
 		return nil
 	}
 
@@ -915,7 +916,7 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	if pin == "" {
 		return fmt.Errorf("pin required but wasn't provided")
 	}
-	return ykLogin(yk.tx, pin)
+	return yk.ykLogin(pin)
 }
 
 func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
@@ -1073,14 +1074,14 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key []byte, slot Slot, private crypto.P
 		tags = append(tags, param...)
 	}
 
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
+	if err := yk.ykAuthenticate(key); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 
-	return ykImportKey(yk.tx, tags, slot, policy)
+	return yk.ykImportKey(tags, slot, policy)
 }
 
-func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
+func (yk *YubiKey) ykImportKey(tags []byte, slot Slot, o Key) error {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return fmt.Errorf("unsupported algorithm")
@@ -1106,7 +1107,7 @@ func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
 		}...),
 	}
 
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := yk.tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 
@@ -1137,7 +1138,7 @@ var _ crypto.Signer = (*ECDSAPrivateKey)(nil)
 // Sign implements crypto.Signer.
 func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return ykSignECDSA(tx, k.slot, k.pub, digest)
+		return k.yk.ykSignECDSA(k.slot, k.pub, digest)
 	})
 }
 
@@ -1207,7 +1208,7 @@ func (k *keyEd25519) Public() crypto.PublicKey {
 
 func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return skSignEd25519(tx, k.slot, k.pub, digest)
+		return k.yk.skSignEd25519(k.slot, k.pub, digest)
 	})
 }
 
@@ -1225,17 +1226,17 @@ func (k *keyRSA) Public() crypto.PublicKey {
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return ykSignRSA(tx, rand, k.slot, k.pub, digest, opts)
+		return k.yk.ykSignRSA(k.slot, k.pub, digest, opts)
 	})
 }
 
 func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return ykDecryptRSA(tx, k.slot, k.pub, msg)
+		return k.yk.ykDecryptRSA(k.slot, k.pub, msg)
 	})
 }
 
-func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
+func (yk *YubiKey) ykSignECDSA(slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
 	var alg byte
 	size := pub.Params().BitSize
 	switch size {
@@ -1263,7 +1264,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, digest)...)),
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -1280,7 +1281,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 
 // This function only works on SoloKeys prototypes and other PIV devices that choose
 // to implement Ed25519 signatures under alg 0x22.
-func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
+func (yk *YubiKey) skSignEd25519(slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
 	// Adaptation of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
 	cmd := apdu{
@@ -1291,7 +1292,7 @@ func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, digest)...)),
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -1387,7 +1388,7 @@ func rsaAlg(pub *rsa.PublicKey) (byte, error) {
 	}
 }
 
-func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte, error) {
+func (yk *YubiKey) ykDecryptRSA(slot Slot, pub *rsa.PublicKey, data []byte) ([]byte, error) {
 	alg, err := rsaAlg(pub)
 	if err != nil {
 		return nil, err
@@ -1400,7 +1401,7 @@ func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte,
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -1426,7 +1427,7 @@ func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte,
 // PKCS#1 v15 is largely informed by the standard library
 // https://github.com/golang/go/blob/go1.13.5/src/crypto/rsa/pkcs1v15.go
 
-func ykSignRSA(tx *scTx, rand io.Reader, slot Slot, pub *rsa.PublicKey, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func (yk *YubiKey) ykSignRSA(slot Slot, pub *rsa.PublicKey, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hash := opts.HashFunc()
 	if hash.Size() != len(digest) {
 		return nil, fmt.Errorf("input must be a hashed message")
@@ -1439,7 +1440,7 @@ func ykSignRSA(tx *scTx, rand io.Reader, slot Slot, pub *rsa.PublicKey, digest [
 
 	var data []byte
 	if o, ok := opts.(*rsa.PSSOptions); ok {
-		salt, err := rsafork.NewSalt(rand, pub, hash, o)
+		salt, err := rsafork.NewSalt(yk.rand, pub, hash, o)
 		if err != nil {
 			return nil, err
 		}
@@ -1484,7 +1485,7 @@ func ykSignRSA(tx *scTx, rand io.Reader, slot Slot, pub *rsa.PublicKey, digest [
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
