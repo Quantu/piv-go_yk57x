@@ -1154,7 +1154,11 @@ func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
 	if peer.Curve.Params().BitSize != k.pub.Curve.Params().BitSize {
 		return nil, errMismatchingAlgorithms
 	}
-	msg := elliptic.Marshal(peer.Curve, peer.X, peer.Y)
+	ecdhPubkey, err := peer.ECDH()
+	if err != nil {
+		return nil, errors.New("unable to convert invalid ecdsa pubkey")
+	}
+	msg := ecdhPubkey.Bytes()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		var alg byte
 		size := k.pub.Params().BitSize
@@ -1207,7 +1211,7 @@ func (k *keyEd25519) Public() crypto.PublicKey {
 
 func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return skSignEd25519(tx, k.slot, k.pub, digest)
+		return skSignEd25519(tx, k.slot, digest)
 	})
 }
 
@@ -1280,7 +1284,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 
 // This function only works on SoloKeys prototypes and other PIV devices that choose
 // to implement Ed25519 signatures under alg 0x22.
-func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
+func skSignEd25519(tx *scTx, slot Slot, digest []byte) ([]byte, error) {
 	// Adaptation of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
 	cmd := apdu{
