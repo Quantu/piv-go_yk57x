@@ -68,9 +68,11 @@ const (
 	algRSA2048 = 0x07
 	algECCP256 = 0x11
 	algECCP384 = 0x14
-	// non-standard; as implemented by SoloKeys. Chosen for low probability of eventual
-	// clashes, if and when PIV standard adds Ed25519 support
-	algEd25519 = 0x22
+	// NIST Draft https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-78-5.ipd.pdf#page=21
+	algRSA3072 = 0x05
+	// non-standard; as implemented by Yubico
+	algRSA4096 = 0x16
+	algEd25519 = 0xe0
 
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-78-4.pdf#page=16
 	keyAuthentication     = 0x9a
