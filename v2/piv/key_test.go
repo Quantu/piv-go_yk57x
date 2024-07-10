@@ -1346,6 +1346,10 @@ func ephemeralKey(t *testing.T, alg Algorithm) privateKey {
 		key, err = rsa.GenerateKey(rand.Reader, 1024)
 	case AlgorithmRSA2048:
 		key, err = rsa.GenerateKey(rand.Reader, 2048)
+	case AlgorithmRSA3072:
+		key, err = rsa.GenerateKey(rand.Reader, 3072)
+	case AlgorithmRSA4096:
+		key, err = rsa.GenerateKey(rand.Reader, 4096)
 	default:
 		t.Fatalf("ephemeral key: unknown algorithm %d", alg)
 	}
